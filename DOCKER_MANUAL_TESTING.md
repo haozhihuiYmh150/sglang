@@ -228,3 +228,29 @@ Then find the best config for each model!
 - **Save output**: Redirect to file: `... --show-report > results_deepseek_tp4_trtllm.txt`
 
 Good luck! 🚀
+
+
+Commands:
+
+Deepseek tp4
+```
+CUDA_VISIBLE_DEVICES=0,1,2,3 python3 -m sglang.launch_server \
+  --model-path deepseek-ai/DeepSeek-V3 \
+  --tp 4 \
+  --quantization fp8 \
+  --moe-runner-backend flashinfer_trtllm \
+  --trust-remote-code \
+  --port 30000
+```
+OOM
+
+Deepseek tp8
+```
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python3 -m sglang.launch_server \
+  --model-path deepseek-ai/DeepSeek-V3 \
+  --tp 8 \
+  --quantization fp8 \
+  --moe-runner-backend flashinfer_trtllm \
+  --trust-remote-code \
+  --port 30000
+```
