@@ -9,7 +9,6 @@ from typing import List, Optional, Tuple
 from sglang.srt.utils import kill_process_tree
 from sglang.test.nightly_bench_utils import BenchmarkResult, generate_markdown_report
 from sglang.test.test_utils import (
-    DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH,
     is_in_ci,
     popen_launch_server,
     write_github_step_summary,
@@ -235,12 +234,12 @@ class NightlyBenchmarkRunner:
         benchmark_results = []
         model_description = f"{model_path}" + (f" ({variant})" if variant else "")
 
-        # Launch server
+        # Launch server with extended timeout for large models
         process = popen_launch_server(
             model=model_path,
             base_url=self.base_url,
             other_args=other_args or [],
-            timeout=DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH,
+            timeout=2000,  # 33 minutes for large model downloads
         )
 
         try:
