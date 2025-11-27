@@ -18,6 +18,8 @@ For each model, we test:
 - For MoE models: flashinfer_trtllm and flashinfer_cutlass backends
 """
 
+import gc
+import time
 import unittest
 
 from nightly_utils import NightlyBenchmarkRunner
@@ -141,6 +143,10 @@ class TestNeurIPSTPMoEConfigs(unittest.TestCase):
                         else:
                             overall_success = False
                             print(f"⚠️  Failed: {model_key} {variant}")
+
+                        # Force garbage collection and wait for GPU memory to clear
+                        gc.collect()
+                        time.sleep(5)
                 else:
                     # Test without MoE backend for non-MoE models
                     variant = f"TP{tp_size}"
@@ -162,6 +168,10 @@ class TestNeurIPSTPMoEConfigs(unittest.TestCase):
                     else:
                         overall_success = False
                         print(f"⚠️  Failed: {model_key} {variant}")
+
+                    # Force garbage collection and wait for GPU memory to clear
+                    gc.collect()
+                    time.sleep(5)
 
         # Write final report to GitHub summary
         self.runner.write_final_report()
