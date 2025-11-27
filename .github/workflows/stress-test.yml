@@ -15,7 +15,37 @@ on:
         type: string
 
 jobs:
-  stress-test:
+  # Original stress tests (commented out for now)
+  # stress-test:
+  #   if: github.repository == 'sgl-project/sglang'
+  #   runs-on: 8-gpu-h200
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
+  #
+  #     - name: Install dependencies
+  #       run: |
+  #         bash scripts/ci/ci_install_dependency.sh
+  #
+  #     - name: Run stress tests
+  #       timeout-minutes: 210
+  #       env:
+  #         NUM_PROMPTS: ${{ inputs.num_prompts }}
+  #         DURATION_MINUTES: ${{ inputs.duration_minutes }}
+  #       run: |
+  #         cd test
+  #         python3 run_suite.py --hw cuda --suite stress
+  #
+  #     - name: Upload results
+  #       if: always()
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: stress-test-results
+  #         path: |
+  #           stress_test_*.jsonl
+
+  # NeurIPS TP and MoE Configuration Testing
+  neurips-tp-moe-configs:
     if: github.repository == 'sgl-project/sglang'
     runs-on: 8-gpu-h200
     steps:
@@ -26,19 +56,22 @@ jobs:
         run: |
           bash scripts/ci/ci_install_dependency.sh
 
-      - name: Run stress tests
-        timeout-minutes: 210
+      - name: Run NeurIPS TP/MoE configuration tests
+        timeout-minutes: 480
         env:
-          NUM_PROMPTS: ${{ inputs.num_prompts }}
-          DURATION_MINUTES: ${{ inputs.duration_minutes }}
+          TRACE_BASE_URL: https://raw.githubusercontent.com/sglang-bot/sglang-ci-data/main/traces/${{ github.run_id }}
+          PERFETTO_RELAY_URL: ${{ vars.PERFETTO_RELAY_URL }}
+          GPU_CONFIG: "8-gpu-h200"
         run: |
+          rm -rf test/performance_profiles_neurips_tp_moe/
           cd test
-          python3 run_suite.py --hw cuda --suite stress
+          python3 nightly/test_neurips_tp_moe_configs.py
 
-      - name: Upload results
+      - name: Publish traces to storage repo
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: stress-test-results
-          path: |
-            stress_test_*.jsonl
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT_FOR_NIGHTLY_CI_DATA }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          python3 scripts/ci/publish_traces.py --traces-dir test/performance_profiles_neurips_tp_moe
