@@ -1428,15 +1428,9 @@ def launch_server(
         # Update logging configs
         set_uvicorn_logging_configs()
 
-        # Build SSL/TLS kwargs only if any SSL arg is provided
+        # Build SSL/TLS kwargs
         ssl_kwargs = {}
-        if server_args.ssl_keyfile or server_args.ssl_certfile:
-            # Validate that both key and cert are provided together
-            if not (server_args.ssl_keyfile and server_args.ssl_certfile):
-                raise ValueError(
-                    "Both --ssl-keyfile and --ssl-certfile must be provided together to enable TLS. "
-                    f"Got ssl_keyfile={server_args.ssl_keyfile}, ssl_certfile={server_args.ssl_certfile}"
-                )
+        if server_args.ssl_keyfile and server_args.ssl_certfile:
             ssl_kwargs["ssl_keyfile"] = server_args.ssl_keyfile
             ssl_kwargs["ssl_certfile"] = server_args.ssl_certfile
             if server_args.ssl_ca_certs:
@@ -1447,6 +1441,12 @@ def launch_server(
                 f"TLS enabled: ssl_keyfile={server_args.ssl_keyfile}, "
                 f"ssl_certfile={server_args.ssl_certfile}, "
                 f"mTLS={'enabled' if server_args.ssl_ca_certs else 'disabled'}"
+            )
+        elif server_args.ssl_keyfile or server_args.ssl_certfile:
+            # If only one of ssl_keyfile or ssl_certfile is provided, raise an error.
+            raise ValueError(
+                "Both --ssl-keyfile and --ssl-certfile must be provided together to enable TLS. "
+                f"Got ssl_keyfile={server_args.ssl_keyfile}, ssl_certfile={server_args.ssl_certfile}"
             )
 
         # Listen for HTTP requests

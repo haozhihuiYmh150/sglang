@@ -308,7 +308,7 @@ impl AppContextBuilder {
         // Force rustls backend when TLS is configured
         if has_tls_config {
             client_builder = client_builder.use_rustls_tls();
-            // Disable built-in root certificates if explicitly requested or if custom CA certs are provided
+            // Disable built-in root certificates if explicitly requested
             if config.tls_disable_builtin_root_certs {
                 client_builder = client_builder.tls_built_in_root_certs(false);
                 info!("Using rustls TLS backend (built-in root certificates disabled, using only custom CA certificates)");
