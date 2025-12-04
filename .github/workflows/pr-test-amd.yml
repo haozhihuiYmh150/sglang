@@ -95,7 +95,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [linux-mi325-gpu-1]
+        runner: [linux-mi325-gpu-4]
     runs-on: ${{matrix.runner}}
     steps:
       - name: Checkout code
