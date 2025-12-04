@@ -250,6 +250,12 @@ class ServerArgs:
     nccl_port: Optional[int] = None
     checkpoint_engine_wait_weights_before_ready: bool = False
 
+    # TLS/SSL configuration
+    ssl_keyfile: Optional[str] = None
+    ssl_certfile: Optional[str] = None
+    ssl_ca_certs: Optional[str] = None
+    ssl_keyfile_password: Optional[str] = None
+
     # Quantization and data type
     dtype: str = "auto"
     quantization: Optional[str] = None
@@ -307,6 +313,7 @@ class ServerArgs:
     crash_dump_folder: Optional[str] = None
     show_time_cost: bool = False
     enable_metrics: bool = False
+    metrics_port: Optional[int] = None
     enable_metrics_for_all_schedulers: bool = False
     tokenizer_metrics_custom_labels_header: str = "x-custom-labels"
     tokenizer_metrics_allowed_custom_labels: Optional[List[str]] = None
@@ -2202,6 +2209,32 @@ class ServerArgs:
             "before serving inference requests.",
         )
 
+        # TLS/SSL configuration
+        parser.add_argument(
+            "--ssl-keyfile",
+            type=str,
+            default=ServerArgs.ssl_keyfile,
+            help="Path to the SSL private key file (PEM format). Enables HTTPS when provided with --ssl-certfile.",
+        )
+        parser.add_argument(
+            "--ssl-certfile",
+            type=str,
+            default=ServerArgs.ssl_certfile,
+            help="Path to the SSL certificate file (PEM format). Enables HTTPS when provided with --ssl-keyfile.",
+        )
+        parser.add_argument(
+            "--ssl-ca-certs",
+            type=str,
+            default=ServerArgs.ssl_ca_certs,
+            help="Path to the CA certificates file (PEM format) for client certificate verification (mTLS).",
+        )
+        parser.add_argument(
+            "--ssl-keyfile-password",
+            type=str,
+            default=ServerArgs.ssl_keyfile_password,
+            help="Password for the SSL private key file, if encrypted.",
+        )
+
         # Quantization and data type
         parser.add_argument(
             "--dtype",
@@ -2535,6 +2568,12 @@ class ServerArgs:
             "--enable-metrics",
             action="store_true",
             help="Enable log prometheus metrics.",
+        )
+        parser.add_argument(
+            "--metrics-port",
+            type=int,
+            default=ServerArgs.metrics_port,
+            help="Port number for the metrics server. If specified, metrics will be served on a separate port instead of the main server port.",
         )
         parser.add_argument(
             "--enable-metrics-for-all-schedulers",

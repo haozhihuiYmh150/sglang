@@ -125,6 +125,7 @@ from sglang.srt.utils import (
     delete_directory,
     get_bool_env_var,
     kill_process_tree,
+    launch_metrics_server,
     set_uvicorn_logging_configs,
 )
 from sglang.utils import get_exception_traceback
@@ -217,9 +218,14 @@ async def lifespan(fast_api_app: FastAPI):
         )
         thread_label = f"MultiTokenizer-{_global_state.tokenizer_manager.worker_id}"
 
-    # Add prometheus middleware
+    # Add prometheus middleware or launch separate metrics server
     if server_args.enable_metrics:
-        add_prometheus_middleware(app)
+        if server_args.metrics_port is not None:
+            # Launch metrics on a separate port
+            launch_metrics_server(server_args.host, server_args.metrics_port)
+        else:
+            # Add metrics endpoint to the main server
+            add_prometheus_middleware(app)
         enable_func_timer()
 
     # Init tracing
@@ -1422,6 +1428,27 @@ def launch_server(
         # Update logging configs
         set_uvicorn_logging_configs()
 
+        # Build SSL/TLS kwargs only if any SSL arg is provided
+        ssl_kwargs = {}
+        if server_args.ssl_keyfile or server_args.ssl_certfile:
+            # Validate that both key and cert are provided together
+            if not (server_args.ssl_keyfile and server_args.ssl_certfile):
+                raise ValueError(
+                    "Both --ssl-keyfile and --ssl-certfile must be provided together to enable TLS. "
+                    f"Got ssl_keyfile={server_args.ssl_keyfile}, ssl_certfile={server_args.ssl_certfile}"
+                )
+            ssl_kwargs["ssl_keyfile"] = server_args.ssl_keyfile
+            ssl_kwargs["ssl_certfile"] = server_args.ssl_certfile
+            if server_args.ssl_ca_certs:
+                ssl_kwargs["ssl_ca_certs"] = server_args.ssl_ca_certs
+            if server_args.ssl_keyfile_password:
+                ssl_kwargs["ssl_keyfile_password"] = server_args.ssl_keyfile_password
+            logger.info(
+                f"TLS enabled: ssl_keyfile={server_args.ssl_keyfile}, "
+                f"ssl_certfile={server_args.ssl_certfile}, "
+                f"mTLS={'enabled' if server_args.ssl_ca_certs else 'disabled'}"
+            )
+
         # Listen for HTTP requests
         if server_args.tokenizer_worker_num == 1:
             uvicorn.run(
@@ -1432,6 +1459,7 @@ def launch_server(
                 log_level=server_args.log_level_http or server_args.log_level,
                 timeout_keep_alive=5,
                 loop="uvloop",
+                **ssl_kwargs,
             )
         else:
             from uvicorn.config import LOGGING_CONFIG
@@ -1452,6 +1480,7 @@ def launch_server(
                 timeout_keep_alive=5,
                 loop="uvloop",
                 workers=server_args.tokenizer_worker_num,
+                **ssl_kwargs,
             )
     finally:
         if server_args.tokenizer_worker_num > 1:

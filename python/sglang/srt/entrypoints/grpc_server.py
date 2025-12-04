@@ -32,9 +32,10 @@ from sglang.srt.managers.io_struct import (
     TokenizedEmbeddingReqInput,
     TokenizedGenerateReqInput,
 )
+from sglang.srt.metrics.func_timer import enable_func_timer
 from sglang.srt.sampling.sampling_params import SamplingParams as SGLSamplingParams
 from sglang.srt.server_args import ServerArgs
-from sglang.srt.utils import kill_process_tree
+from sglang.srt.utils import kill_process_tree, launch_metrics_server
 from sglang.utils import get_exception_traceback
 
 logger = logging.getLogger(__name__)
@@ -782,6 +783,19 @@ async def serve_grpc(
 
     await server.start()
     logger.info(f"gRPC server listening on {listen_addr}")
+
+    # Launch metrics server if enabled
+    # In gRPC mode, metrics may be served on a separate HTTP port since gRPC doesn't support HTTP endpoints
+    if server_args.enable_metrics:
+        if server_args.metrics_port is not None:
+            launch_metrics_server(server_args.host, server_args.metrics_port)
+            enable_func_timer()
+        else:
+            logger.warning(
+                "Metrics enabled but --metrics-port not specified. "
+                "In gRPC mode, metrics may be served on a separate port. "
+                "Please specify --metrics-port to enable the metrics endpoint."
+            )
 
     # Start warmup in a separate thread
     warmup_thread = threading.Thread(
