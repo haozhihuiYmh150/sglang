@@ -22,6 +22,10 @@ pub struct DecodeStream {
 
     prefix_offset: usize,
     read_offset: usize,
+
+    /// Cached prefix text - avoids redundant decode calls
+    /// This is valid as long as prefix_offset and read_offset don't change
+    cached_prefix_text: Option<String>,
 }
 
 impl DecodeStream {
@@ -39,6 +43,7 @@ impl DecodeStream {
             prefix_offset: num_input_tokens
                 .saturating_sub(INITIAL_INCREMENTAL_DETOKENIZATION_OFFSET),
             read_offset: num_input_tokens,
+            cached_prefix_text: None,
         }
     }
 
@@ -48,10 +53,15 @@ impl DecodeStream {
     pub fn step(&mut self, id: TokenIdType) -> Result<Option<String>> {
         self.all_token_ids.push(id);
 
-        let prefix_text = self.tokenizer.decode(
-            &self.all_token_ids[self.prefix_offset..self.read_offset],
-            self.skip_special_tokens,
-        )?;
+        // Ensure prefix_text is cached (only decode once per emit cycle)
+        if self.cached_prefix_text.is_none() {
+            let text = self.tokenizer.decode(
+                &self.all_token_ids[self.prefix_offset..self.read_offset],
+                self.skip_special_tokens,
+            )?;
+            self.cached_prefix_text = Some(text);
+        }
+        let prefix_text = self.cached_prefix_text.as_ref().unwrap();
 
         let new_text = self.tokenizer.decode(
             &self.all_token_ids[self.prefix_offset..],
@@ -59,12 +69,16 @@ impl DecodeStream {
         )?;
 
         if new_text.len() > prefix_text.len() && !new_text.ends_with("�") {
-            let new_text = new_text[prefix_text.len()..].to_string();
+            let output = new_text[prefix_text.len()..].to_string();
 
             self.prefix_offset = self.read_offset;
             self.read_offset = self.all_token_ids.len();
 
-            Ok(Some(new_text))
+            // Update cache: next prefix is what we're outputting
+            // (since prefix_offset is now where read_offset was, and read_offset is now len)
+            self.cached_prefix_text = Some(output.clone());
+
+            Ok(Some(output))
         } else {
             Ok(None)
         }
