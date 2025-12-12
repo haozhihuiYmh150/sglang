@@ -138,6 +138,7 @@ from sglang.srt.utils import (
     make_layers,
     use_intel_amx_backend,
 )
+from sglang.srt.utils import is_blackwell
 
 _is_hip = is_hip()
 _is_cuda = is_cuda()
@@ -2799,19 +2800,21 @@ class DeepseekV2ForCausalLM(nn.Module):
     ) -> None:
         super().__init__()
 
+        self.pp_group = get_pp_group()
+        self.config = config
         # for quark model load
         # Fuse q_a_proj and kv_a_proj_with_mqa along output dimension when q_lora_rank is not None
-        self.fuse_qkv_a_proj = (
-            hasattr(config, "q_lora_rank") and config.q_lora_rank is not None
+        self.fuse_qkv_a_proj = hasattr(self.config, "q_lora_rank") and (
+            self.config.q_lora_rank is not None
         )
+        self.cached_a_proj = {} if self.fuse_qkv_a_proj else None
+
         if self.fuse_qkv_a_proj:
             self.packed_modules_mapping["fused_qkv_a_proj_with_mqa"] = [
                 "q_a_proj",
                 "kv_a_proj_with_mqa",
             ]
-
-        self.pp_group = get_pp_group()
-        self.config = config
+            
         self.tp_size = get_tensor_model_parallel_world_size()
         self.quant_config = quant_config
         self.determine_num_fused_shared_experts()
@@ -2834,6 +2837,7 @@ class DeepseekV2ForCausalLM(nn.Module):
                 if isinstance(layer.mlp, DeepseekV2MoE)
             }
         )
+        self._first_call_post_load_weights = True
 
     @property
     def routed_experts_weights_of_layer(self):
@@ -2904,7 +2908,8 @@ class DeepseekV2ForCausalLM(nn.Module):
         return self.model.end_layer
 
     def post_load_weights(self, is_nextn=False, weight_names=None):
-
+        self._first_call_post_load_weights = False
+        self.cached_a_proj = {} if self.fuse_qkv_a_proj else None
         # Perform post-processing after loading weights
         if is_nextn:
             layer_ids = [self.config.num_hidden_layers]
@@ -3110,7 +3115,6 @@ class DeepseekV2ForCausalLM(nn.Module):
                 layer.self_attn.kv_b_proj,
                 layer.self_attn.o_proj,
             ]
-
             if self.config.q_lora_rank is not None:
                 module_list.append(layer.self_attn.fused_qkv_a_proj_with_mqa)
                 module_list.append(layer.self_attn.q_b_proj)
@@ -3120,7 +3124,7 @@ class DeepseekV2ForCausalLM(nn.Module):
 
             for module in module_list:
                 requant_weight_ue8m0_inplace(
-                    module.weight, module.weight_scale_inv, weight_block_size
+                    module, module.weight, module.weight_scale_inv, weight_block_size
                 )
 
             if layer_id in moe_layers or is_nextn:
@@ -3131,7 +3135,7 @@ class DeepseekV2ForCausalLM(nn.Module):
                         shared_experts.down_proj,
                     ]:
                         requant_weight_ue8m0_inplace(
-                            module.weight, module.weight_scale_inv, weight_block_size
+                            module, module.weight, module.weight_scale_inv, weight_block_size
                         )
 
                 experts = layer.mlp.experts
@@ -3140,7 +3144,7 @@ class DeepseekV2ForCausalLM(nn.Module):
                         experts.w13_weight_fp8,
                         experts.w2_weight_fp8,
                     ]:
-                        requant_weight_ue8m0_inplace(w[0], w[1], weight_block_size)
+                        requant_weight_ue8m0_inplace(None, w[0], w[1], weight_block_size)
             else:
                 mlp = layer.mlp
                 assert isinstance(mlp, DeepseekV2MLP)
@@ -3149,11 +3153,20 @@ class DeepseekV2ForCausalLM(nn.Module):
                     mlp.down_proj,
                 ]:
                     requant_weight_ue8m0_inplace(
-                        module.weight, module.weight_scale_inv, weight_block_size
+                        module, module.weight, module.weight_scale_inv, weight_block_size
                     )
 
+    def _patch_weight_loader(self, params_dict, name, param):
+        if (is_blackwell()
+            and "weight_scale_inv" in name 
+            and f'{name}_buf' in params_dict 
+            and params_dict[name].dtype != params_dict[f'{name}_buf'].dtype
+            and params_dict[name].dtype == torch.int32):
+            tmp = param.data            
+            param.data = params_dict[f'{name}_buf'].data
+            params_dict[f'{name}_buf'].data = tmp
+            
     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]], is_nextn=False):
-
         if is_nextn:
             if hasattr(self.config, "num_nextn_predict_layers"):
                 num_nextn_layers = self.config.num_nextn_predict_layers
@@ -3188,12 +3201,6 @@ class DeepseekV2ForCausalLM(nn.Module):
             expert_params_mapping += FusedMoE.make_expert_input_scale_params_mapping(
                 num_experts=self.config.n_routed_experts
             )
-
-        # Fuse q_a_proj and kv_a_proj_with_mqa along output dimension when q_lora_rank is not None
-        fuse_qkv_a_proj = hasattr(self.config, "q_lora_rank") and (
-            self.config.q_lora_rank is not None
-        )
-        cached_a_proj = {} if fuse_qkv_a_proj else None
 
         if is_nextn:
             nextn_layer_prefix = f"model.layers.{nextn_layer_id}"
@@ -3279,6 +3286,7 @@ class DeepseekV2ForCausalLM(nn.Module):
                     if name.endswith(".bias") and name not in params_dict:
                         continue
                     param = params_dict[name]
+                    self._patch_weight_loader(params_dict, name, param)
                     weight_loader = param.weight_loader
                     futures.append(
                         executor.submit(weight_loader, param, loaded_weight, shard_id)
@@ -3291,6 +3299,7 @@ class DeepseekV2ForCausalLM(nn.Module):
                             continue
                         name = name.replace(weight_name, param_name)
                         param = params_dict[name]
+                        self._patch_weight_loader(params_dict, name, param)
                         weight_loader = param.weight_loader
                         futures.append(
                             executor.submit(
@@ -3313,10 +3322,10 @@ class DeepseekV2ForCausalLM(nn.Module):
                         # Skip loading norm if not last rank in pipeline parallelism
                         if ".norm." in name and not self.pp_group.is_last_rank:
                             continue
-                        if fuse_qkv_a_proj and (
+                        if self.fuse_qkv_a_proj and (
                             "q_a_proj" in name or "kv_a_proj_with_mqa" in name
                         ):
-                            cached_a_proj[name] = loaded_weight
+                            self.cached_a_proj[name] = loaded_weight
                             q_a_proj_name = (
                                 name
                                 if "q_a_proj" in name
@@ -3330,11 +3339,11 @@ class DeepseekV2ForCausalLM(nn.Module):
 
                             # When both q_a_proj and kv_a_proj_with_mqa has been cached, load the fused weight to parameter
                             if (
-                                q_a_proj_name in cached_a_proj
-                                and kv_a_proj_name in cached_a_proj
+                                q_a_proj_name in self.cached_a_proj
+                                and kv_a_proj_name in self.cached_a_proj
                             ):
-                                q_a_proj_weight = cached_a_proj[q_a_proj_name]
-                                kv_a_proj_weight = cached_a_proj[kv_a_proj_name]
+                                q_a_proj_weight = self.cached_a_proj[q_a_proj_name]
+                                kv_a_proj_weight = self.cached_a_proj[kv_a_proj_name]
                                 cat_dim = 0
                                 if self.quant_config is not None and (
                                     self.quant_config.get_name() == "awq"
@@ -3356,15 +3365,15 @@ class DeepseekV2ForCausalLM(nn.Module):
                                     )
                                 )
                                 param = params_dict[param_name]
-
+                                self._patch_weight_loader(params_dict, param_name, param)
                                 weight_loader = getattr(
                                     param, "weight_loader", default_weight_loader
                                 )
                                 futures.append(
                                     executor.submit(weight_loader, param, fused_weight)
                                 )
-                                cached_a_proj.pop(q_a_proj_name)
-                                cached_a_proj.pop(kv_a_proj_name)
+                                self.cached_a_proj.pop(q_a_proj_name)
+                                self.cached_a_proj.pop(kv_a_proj_name)
                         else:
                             if (
                                 "k_scale" in name or "v_scale" in name
@@ -3383,6 +3392,7 @@ class DeepseekV2ForCausalLM(nn.Module):
                                 logger.warning(f"{name} not found in params_dict.")
                                 continue
                             param = params_dict[name]
+                            self._patch_weight_loader(params_dict, name, param)
                             weight_loader = getattr(
                                 param, "weight_loader", default_weight_loader
                             )
@@ -3393,8 +3403,8 @@ class DeepseekV2ForCausalLM(nn.Module):
             # Wait for all tasks to complete and raise any exceptions.
             for future in concurrent.futures.as_completed(futures):
                 future.result()
-
-        self.post_load_weights(is_nextn=is_nextn, weight_names=weight_names)
+        if not is_blackwell() or self._first_call_post_load_weights:
+            self.post_load_weights(is_nextn=is_nextn, weight_names=weight_names)
 
     def get_embed_and_head(self):
         return self.model.embed_tokens.weight, self.lm_head.weight

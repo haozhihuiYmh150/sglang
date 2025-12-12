@@ -1223,6 +1223,13 @@ class ModelRunner:
             raise NotImplementedError(f"Unknown load_format={load_format}")
         return True, "Success"
 
+    def post_loaded_weights(
+        self,
+    ):
+        monkey_patch_torch_reductions()
+        self.model.post_load_weights()
+        return True, "Success"
+
     def _update_weights_from_flattened_bucket(
         self,
         flattened_tensor_bucket_dict,
@@ -1231,7 +1238,6 @@ class ModelRunner:
         flattened_tensor = flattened_tensor_bucket_dict["flattened_tensor"]
         metadata = flattened_tensor_bucket_dict["metadata"]
 
-        # Convert metadata dict to our format
         converted_metadata = []
         for meta in metadata:
             converted_meta = FlattenedTensorMetadata(
@@ -1244,13 +1250,11 @@ class ModelRunner:
             )
             converted_metadata.append(converted_meta)
 
-        # Create bucket and reconstruct tensors
         bucket = FlattenedTensorBucket(
             flattened_tensor=flattened_tensor, metadata=converted_metadata
         )
         reconstructed_tensors = bucket.reconstruct_tensors()
 
-        # Load the reconstructed tensors using the standard method
         self.model.load_weights(reconstructed_tensors)
 
         return True, "Success"

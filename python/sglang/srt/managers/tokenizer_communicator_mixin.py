@@ -67,6 +67,8 @@ from sglang.srt.managers.io_struct import (
     UpdateWeightsFromDistributedReqOutput,
     UpdateWeightsFromTensorReqInput,
     UpdateWeightsFromTensorReqOutput,
+    PostLoadedWeightsReqInput,
+    PostLoadedWeightsReqOutput,
 )
 from sglang.srt.server_args import LoRARef, ServerArgs
 from sglang.srt.utils import get_bool_env_var
@@ -170,6 +172,9 @@ class TokenizerCommunicatorMixin:
         self.update_weights_from_tensor_communicator = _Communicator(
             self.send_to_scheduler, server_args.dp_size
         )
+        self.post_loaded_weights_communicator = _Communicator(
+            self.send_to_scheduler, server_args.dp_size
+        )
         self.get_weights_by_name_communicator = _Communicator(
             self.send_to_scheduler, server_args.dp_size
         )
@@ -235,6 +240,14 @@ class TokenizerCommunicatorMixin:
                 (
                     UpdateWeightsFromTensorReqOutput,
                     self.update_weights_from_tensor_communicator.handle_recv,
+                ),
+                (
+                    PostLoadedWeightsReqOutput,
+                    self.post_loaded_weights_communicator.handle_recv,
+                ),
+                (
+                    PostLoadedWeightsReqInput,
+                    self.post_loaded_weights_communicator.handle_recv,
                 ),
                 (
                     GetWeightsByNameReqOutput,
@@ -439,6 +452,22 @@ class TokenizerCommunicatorMixin:
         # cannot run while requests are in progress.
         async with self.model_update_lock.writer_lock:
             result = (await self.update_weights_from_tensor_communicator(obj))[0]
+            return result.success, result.message
+
+    async def post_loaded_weights(
+        self: TokenizerManager,
+        obj: PostLoadedWeightsReqInput,
+        request: Optional[fastapi.Request] = None,
+    ) -> Tuple[bool, str]:
+        self.auto_create_handle_loop()
+        assert (
+            self.server_args.dp_size == 1 or self.server_args.enable_dp_attention
+        ), "dp_size must be 1 or dp attention must be enabled for update weights from tensor"
+
+        # This means that weight sync
+        # cannot run while requests are in progress.
+        async with self.model_update_lock.writer_lock:
+            result = (await self.post_loaded_weights_communicator(obj))[0]
             return result.success, result.message
 
     async def load_lora_adapter(

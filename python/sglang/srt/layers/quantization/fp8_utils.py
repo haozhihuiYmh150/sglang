@@ -413,17 +413,22 @@ def block_quant_dequant(
     return (x_q_block.to(torch.float32) * x_scale_repeat).to(dtype)
 
 
-def requant_weight_ue8m0_inplace(weight, weight_scale_inv, weight_block_size):
+def requant_weight_ue8m0_inplace(module, weight, weight_scale_inv, weight_block_size):
     assert isinstance(weight, torch.nn.Parameter)
     assert isinstance(weight_scale_inv, torch.nn.Parameter)
 
     new_weight, new_weight_scale_inv = _requant_weight_ue8m0(
         weight.to(weight_scale_inv.device), weight_scale_inv, weight_block_size
     )
-
-    offloader.update_param(weight, new_weight)
-    weight_scale_inv.data = new_weight_scale_inv
-
+    if module.weight_scale_inv.dtype == module.weight_scale_inv_buf.dtype:
+        offloader.update_param(weight, new_weight)
+        weight_scale_inv.data = new_weight_scale_inv
+    else:
+        tmp = module.weight_scale_inv.data
+        module.weight_scale_inv.data = module.weight_scale_inv_buf.data
+        module.weight_scale_inv_buf.data = tmp
+        weight.data.copy_(new_weight.data)
+        module.weight_scale_inv.data.copy_(new_weight_scale_inv.data)
 
 def _requant_weight_ue8m0(
     weight: torch.Tensor,

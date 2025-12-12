@@ -1059,6 +1059,14 @@ class UpdateWeightsFromTensorReqOutput(BaseReq):
     success: bool
     message: str
 
+@dataclass
+class PostLoadedWeightsReqInput(BaseReq):
+    pass
+
+@dataclass
+class PostLoadedWeightsReqOutput(BaseReq):
+    success: bool
+    message: str
 
 @dataclass
 class InitWeightsSendGroupForRemoteInstanceReqInput(BaseReq):

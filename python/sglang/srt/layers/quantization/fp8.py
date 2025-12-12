@@ -91,6 +91,7 @@ if TYPE_CHECKING:
     )
     from sglang.srt.layers.moe.topk import TopKOutput
     from sglang.srt.layers.quantization.w4afp8 import W4AFp8Config
+from sglang.srt.utils.common import is_blackwell
 
 _is_hip = is_hip()
 _is_cuda = is_cuda()
@@ -310,6 +311,15 @@ class Fp8LinearMethod(LinearMethodBase):
                 )
                 scale[:] = torch.finfo(torch.float32).min
                 layer.register_parameter("weight_scale_inv", scale)
+                if is_blackwell():
+                    scale_buf = BlockQuantScaleParameter(
+                        data=torch.empty_like(scale.data),
+                        input_dim=1,
+                        output_dim=0,
+                        weight_loader=weight_loader,
+                    )
+                    layer.register_parameter("weight_scale_inv_buf", scale_buf)
+
             else:
                 scale = PerTensorScaleParameter(
                     data=torch.empty(len(output_partition_sizes), dtype=torch.float32),

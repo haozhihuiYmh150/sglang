@@ -62,6 +62,7 @@ from sglang.srt.managers.io_struct import (
     UpdateWeightFromDiskReqInput,
     UpdateWeightsFromDistributedReqInput,
     UpdateWeightsFromTensorReqInput,
+    PostLoadedWeightsReqInput,
 )
 from sglang.srt.managers.multi_tokenizer_mixin import MultiTokenizerRouter
 from sglang.srt.managers.scheduler import run_scheduler_process
@@ -493,6 +494,20 @@ class Engine(EngineBase):
         return loop.run_until_complete(
             self.tokenizer_manager.update_weights_from_tensor(obj, None)
         )
+        
+    def post_loaded_weights(
+        self,
+    ):
+        obj = PostLoadedWeightsReqInput()
+        loop = asyncio.get_event_loop()
+
+        if loop.is_running():
+            task = asyncio.create_task(self.tokenizer_manager.post_loaded_weights(obj, None))
+            return task
+        else:
+            return loop.run_until_complete(
+                self.tokenizer_manager.post_loaded_weights(obj, None)
+            )
 
     def update_weights_from_disk(
         self,
